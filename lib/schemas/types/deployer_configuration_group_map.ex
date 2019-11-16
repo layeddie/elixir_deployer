@@ -13,12 +13,12 @@ defmodule Deployer.Configuration.GroupMap do
         ({k, group}, acc) when is_map(group) ->
           case Context.create_group(group) do
             {:ok, valid} -> Map.put(acc, k, valid)
-            _ ->
-              Deployer.Helpers.ANSI.warn("Invalid Group Definition - for key #{k} - #{inspect group}")
+            {:error, errors} ->
+              Deployer.Helpers.ANSI.warn("Invalid Group Definition - loading ctx create - for key #{k} - #{inspect group}\n Errors: #{inspect errors}")
               acc
           end
           ({k, group}, acc) ->
-          Deployer.Helpers.ANSI.warn("Invalid Group Definition - for key #{k} - #{inspect group}")
+          Deployer.Helpers.ANSI.warn("Invalid Group Definition - loading ctx create - for key #{k} - #{inspect group}")
           acc
       end)
 
@@ -34,12 +34,12 @@ defmodule Deployer.Configuration.GroupMap do
         ({k, group}, acc) when is_map(group) ->
           case Context.create_group(group) do
             {:ok, valid} -> Map.put(acc, k, valid)
-            _ ->
-              Deployer.Helpers.ANSI.warn("Invalid Group Definition - for key #{k} - #{inspect group}")
+            {:error, errors} ->
+              Deployer.Helpers.ANSI.warn("Invalid Group Definition - casting ctx create - for key #{k} - #{inspect group}\n Errors: #{inspect errors}")
               acc
           end
           ({k, group}, acc) ->
-          Deployer.Helpers.ANSI.warn("Invalid Group Definition - for key #{k} - #{inspect group}")
+          Deployer.Helpers.ANSI.warn("Invalid Group Definition - casting - for key #{k} - #{inspect group}")
           acc
       end)
 

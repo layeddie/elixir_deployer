@@ -1,4 +1,4 @@
-defmodule Deployer.ENV do
+defmodule Deployer.Env do
   use Ecto.Schema
 
   @derive Jason.Encoder
@@ -6,11 +6,10 @@ defmodule Deployer.ENV do
 
   embedded_schema do
     field :env,       :map, default: %{}
-    field :parsed,    :boolean, default: false
     field :datetime,  :utc_datetime
     field :unix_ts,   :integer
     
-    embeds_one :paths,  Deployer.ENV.Paths
+    embeds_one :paths,  Deployer.Env.Paths
     embeds_one :config, Deployer.Configuration
   end
 end

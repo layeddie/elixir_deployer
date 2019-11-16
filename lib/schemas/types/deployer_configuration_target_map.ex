@@ -10,16 +10,19 @@ defmodule Deployer.Configuration.TargetMap do
     data_map =
       Enum.reduce(data, %{}, fn
         ({k, %Target{} = target}, acc) -> Map.put(acc, k, target)
+        ({k, {_,_,_} = mfa}, acc) -> Map.put(acc, k, mfa)
         ({k, target}, acc) when is_map(target) ->
+          
           case Context.create_target(target) do
             {:ok, valid} -> Map.put(acc, k, valid)
-            _ ->
-              Deployer.Helpers.ANSI.warn("Invalid Target Definition - for key #{k} - #{inspect target}")
+            {:error, errors} ->
+              Deployer.Helpers.ANSI.warn("Invalid Target Definition - loading ctx create - for key #{k} - #{inspect target}\n Errors: #{inspect errors}")
               acc
           end
-          ({k, target}, acc) ->
-          Deployer.Helpers.ANSI.warn("Invalid Target Definition - for key #{k} - #{inspect target}")
-          acc
+          
+        ({k, target}, acc) ->
+            Deployer.Helpers.ANSI.warn("Invalid Target Definition - loading - for key #{k} - #{inspect target}")
+            acc
       end)
 
     {:ok, data_map}
@@ -31,15 +34,17 @@ defmodule Deployer.Configuration.TargetMap do
     data_map =
       Enum.reduce(data, %{}, fn
         ({k, %Target{} = target}, acc) -> Map.put(acc, k, target)
+        ({k, {_,_,_} = mfa}, acc) -> Map.put(acc, k, mfa)
         ({k, target}, acc) when is_map(target) ->
           case Context.create_target(target) do
             {:ok, valid} -> Map.put(acc, k, valid)
-            _ ->
-              Deployer.Helpers.ANSI.warn("Invalid Target Definition - for key #{k} - #{inspect target}")
+            {:error, errors} ->
+              Deployer.Helpers.ANSI.warn("Invalid Target Definition - casting ctx create - for key #{k} - #{inspect target}\n Errors: #{inspect errors}")
               acc
           end
-          ({k, target}, acc) ->
-          Deployer.Helpers.ANSI.warn("Invalid Target Definition - for key #{k} - #{inspect target}")
+
+        ({k, target}, acc) ->
+          Deployer.Helpers.ANSI.warn("Invalid Target Definition - casting - for key #{k} - #{inspect target}")
           acc
       end)
 

@@ -1,117 +1,94 @@
 defmodule Mix.Tasks.Deployer.Deploy do
   use Mix.Task
+
+  alias Deployer.Release, as: Rel
+  alias Deployer.Env
   
   alias Deployer.Helpers, as: DH
   alias DH.ANSI, as: AH
-  require AH
 
   alias Deployer.SSH
-
-  @base_remote_config %{
-    releases: [],
-    current_deploying: false,
-    current_symlink: false
-  }
+  alias SSH.Sendfile
 
   @required_args [:target]
 
   @shortdoc "Deploys a Release Tar to a Host Server"
   def run(args \\ []) do
-
-    
-    
-    with(
-      {_, :ok} <- {:set_deployer_paths, DH.Paths.set_deployer_paths()},
-      {_, true} <- {:deployer_init?, DH.Paths.is_initialised?()},
-      {_, :ok} <- {:parsing_args, DH.args_into_pterms(args)},
-      {_, :ok} <- {:enforce_args, DH.enforce_args(@required_args)},
-      {_, :ok} <- {:check_release, check_release(DH.read_env(:release))},
-      {_, :ok} <- {:add_names, DH.maybe_create_essential()},
-      {_, {:ok, conf}} <- {:make_deploy_conf, DH.make_deploy_conf()},
-      {_, {:ok, name}} <- {:try_ssh_connect, Mix.Tasks.Deployer.Ssh.run([])},
-      {_, {:ok, remote_info}} <- {:maybe_create_remote_structure, maybe_create_remote_structure(conf, name)},
-      {_, {:ok, n_remote_info}} <- {:check_stale_deployments, check_stale(remote_info, conf, name)}
-    ) do
-      AH.success("Finished Deploying: #{inspect n_remote_info}")
-    else
-      error ->
-        AH.error("Deployer Error: #{inspect error}")
+    try do
+      with(
+        {_, %Env{} = ctx} <- {:load_ctx, DH.load_config(args)},
+        {_, :ok} <- {:enforce_args, DH.enforce_args(ctx, @required_args)},
+        {_, %Rel{ref: rel_ref} = rel} <- {:check_release, check_release(ctx)},
+        {_, {:ok, conf}} <- {:make_deploy_conf, DH.make_deploy_conf(ctx)},
+        {_, {:ok, name}} <- {:try_ssh_connect, Mix.Tasks.Deployer.Ssh.run(ctx)},
+        {_, {:ok, remote_info}} <- {:create_remote?, DH.Remote.maybe_create_remote(conf, name)},
+        {_, {:ok, n_rem_info_2}} <- {:stale_deployments?, check_stale(remote_info, conf, name)},
+        %{releases: releases} <- n_rem_info_2,
+        [_|_] = new_releases <- make_uniq_rels([rel | Rel.remove_latest(releases, rel.name)]),
+        n_rem_info_3  <- %{n_rem_info_2 | current_deploying: "#{rel_ref}", releases: new_releases},
+        {_, {:ok, %Sendfile{} = upload}} <- {:uploading_release, SSH.upload_release(name, rel, conf)},
+        {_, :ok} <- {:untar_release, untar_release(upload, name)},
+        {_, {:ok, n_rem_info_4}} <- {:symlink, DH.Remote.symlink(upload, n_rem_info_3, rel, name)},
+        {_, :ok} <- {:writing_info_after_deployment, write_info(n_rem_info_4, conf, name)}
+      ) do
+        AH.success("Finished Deploying! #{rel.name}")
+        IO.inspect(n_rem_info_4, label: "Current Versions Stored in the Remote Host")
+        {:ok, ctx}
+      else
+        error ->
+          AH.error("Deployer Error: #{inspect error}")
+      end
+    after
+      DH.DETS.close()
     end
   end
 
-  def maybe_create_remote_structure(conf, name) do
-    with(
-      {_, path} when is_binary(path) <- {:conf_target_path, Keyword.get(conf, :path, :no_deployer_path_for_target)},
-      {_, :ok} <- {:check_if_has_existing_remote, AH.warn("Checking if deployer has been init in the remote server")},
-      {_, {1, _}} <- {{:has_deployer_remote, path}, SSH.execute("test -e #{path}", name)},
-      {_, :ok} <- {:creating_deployer_base, AH.warn("Deployer hasn't been init. Creating deployer base structure on remote server")},
-      {_, {0, _}} <- {:mkdir_deployer_base, SSH.execute("mkdir -p #{path}/{config,releases/{current/deployed}}", name)},
-      {_, :ok} <- {:creating_info_file, AH.warn("Successfully created structure, storing base config")},
-      {_, {0, _}} <- {:create_info_file, SSH.execute("printf %s '#{inspect(@base_remote_config)}' > #{path}/config/deployer_info", name)},
-      {_, :ok} <- {:created_remote_config, AH.success("Successfully stored base config")}
-    ) do
-      {:ok, @base_remote_config}
-    else
-      {{:has_deployer_remote, path}, {0, _}} ->
-        AH.warn("Deployer has already been init in the remote server, checking remote config...")
-      read_remote_config(path, name)
-      error ->
-        {:error, error}
-    end
-  end
-
-  defp read_remote_config(path, name) do
-    case SSH.execute("cat #{path}/config/deployer_info", name) do
-      {0, contents} ->
-        case Code.eval_string(contents) do
-          {config, _} ->
-            AH.success("Valid config found.")
-            {:ok, config}
-          _ -> {:error, :reading_config, contents}
-        end
-      {posix_code, _} -> {:has_deployer_remote, :unable_to_read_remote_config, {:return_code, posix_code}}
-    end
-  end
-  
   defp check_stale(%{current_deploying: ref} = remote_info, conf, name) when ref do
-    case AH.wait_input("A deployment hasn't completed >> deploy ref: #{ref} - Do you want to remove it and proceed? [Yna] (answer Y for yes, n for no or a to abort)") do
-      "Y\n" -> remove_stale(remote_info, conf, name)
-      "n\n" -> change_stale(remote_info, conf, name)
-      "a\n" -> {:error, {:stale_deployment, :aborted}}
+    case AH.wait_input("A deployment hasn't completed >> deploy ref: #{ref} - Do you want to remove it and proceed? [Yna] (answer Y for yes, n to keep the release in the remote or a to abort)") do
+      "Y" -> remove_stale(remote_info, conf, name)
+      "n" -> {:ok, remote_info}
+      "a" -> {:error, {:stale_deployment, :aborted}}
       input ->
         AH.error("Invalid option: " <> String.trim_trailing(input))
         check_stale(remote_info, conf, name)
     end
   end
 
-  defp check_stale(remote_info, _conf, _name) do
-    {:ok, %{remote_info | current_deploying: DH.read_env(:release)}}
-  end
+  defp check_stale(remote_info, _conf, _name), do: {:ok, remote_info}
 
-  defp remove_stale(%{current_deploying: ref} = remote_info, conf, name) do
+  defp remove_stale(%{current_deploying: ref, releases: releases} = rem_info, conf, name) do
     with(
-      {_, path} when is_binary(path) <- {:conf_target_path, Keyword.get(conf, :path, :no_deployer_path_for_target)},
+      {_, path} when is_binary(path) <- {:conf_target_path, Map.get(conf, :path, :no_deployer_path_for_target)},
       {_, :ok} <- {:attempting_to_remove_stale, AH.warn("Attempting to remove #{ref}")},
-      {_, {0, _}} <- {:remove_stale, SSH.execute("rm -rf #{path}/releases/#{ref}", name)}
+      {_, {0, _}} <- {:remove_stale, SSH.execute("rm -rf #{path}/releases/deployer_#{ref}", name)}
     ) do
       AH.success("Removed Stale deployment")
-      new_ref = DH.read_env(:release)
-      {:ok, %{remote_info | current_deploying: new_ref}}
+      {:ok, %{rem_info | releases: Enum.reject(releases, fn(%{ref: r_ref}) -> r_ref == ref end)}}
     else
       error -> error
     end
   end
 
-  defp change_stale(remote_info, _conf, _name) do
-    new_ref = DH.read_env(:release)
-    {:ok, %{remote_info | current_deploying: new_ref}}
+  defp write_info(remote_info, conf, name) do
+    with(
+      {_, path} when is_binary(path) <- {:conf_target_path, Map.get(conf, :path, :no_deployer_path_for_target)},
+      {_, {0, _}} <- {:create_info_file, SSH.execute("printf %s '#{inspect(remote_info)}' > #{path}/config/deployer_info", name)},
+      {_, :ok} <- {:created_remote_config, AH.success("Updated remote stored base config.")}
+    ) do
+      :ok
+    else
+      error -> error
+    end
   end
 
-  def check_release(release) do
-    case DH.DETS.get_existing_releases() do
+  def check_release(%Env{} = ctx) do
+    release = DH.decide_release(ctx)
+    
+    case DH.DETS.get_existing_releases(ctx) do
       {:ok, [_|_] = releases} ->
-        case {release, DH.DETS.check_release_exists(release, releases)} do
-          {r, true} when not is_nil(r) -> :ok
+        case {release, DH.DETS.get_if_release_exists(release, releases)} do
+          {r, %Rel{} = rel} when not is_nil(r) -> rel
+          {_, {:by_latest, %Rel{} = rel}} -> maybe_accept_latest(rel, releases)
           _ -> re_pick_release(release, releases)
         end
       {:ok, []} -> {:error, :no_available_releases}
@@ -121,7 +98,7 @@ defmodule Mix.Tasks.Deployer.Deploy do
 
   def re_pick_release(release, releases) do
     if release do
-      AH.warn("Release with ref: #{release} wasn't found.")
+      AH.warn("Release with id/name: #{release} wasn't found.")
     else
       AH.warn("You haven't specified a release ref.")
     end
@@ -129,21 +106,40 @@ defmodule Mix.Tasks.Deployer.Deploy do
     format_releases(releases)
     |> AH.response()
     
-    case AH.wait_input("") |> String.trim_trailing() do
+    case AH.wait_input("") do
       "\\a" -> {:error, :no_existing_release}
       pick ->
-        case DH.DETS.check_release_exists(pick, releases) do
-          true -> DH.put_env(:release, pick)
+        case DH.DETS.get_if_release_exists(pick, releases) do
+          %Rel{} = rel -> rel
+          {:by_latest, rel} -> maybe_accept_latest(rel, releases)
           _ -> re_pick_release(pick, releases)
         end
     end
   end
 
   def format_releases(releases) do
-    ["Id, Name,Timestamp" |
-     Enum.map(releases, fn(%{name: name, id: id, created_at: dt}) ->
-       "#{id}, #{name}, #{DateTime.to_iso8601(dt)}"
+    ["Id - Name ::: Tags ::: Timestamp" |
+     Enum.map(releases, fn(%{name: name, id: id, created_at: dt, tags: tags}) ->
+       "#{id} - #{name} ::: #{Enum.join(tags, " - ")} ::: #{DateTime.to_iso8601(dt)}"
      end)
     ]
+  end
+
+  def maybe_accept_latest(%Rel{name: name} = rel, releases) do
+    case AH.wait_input(IO.ANSI.green() <> "Release with name #{name} picked by `latest` tag. Deploy?" <> IO.ANSI.default_color() <> " [Yn]") do
+      "Y" -> rel
+      _ -> re_pick_release(nil, releases)
+    end
+  end
+
+  def make_uniq_rels(releases) do
+    Enum.uniq_by(releases, fn(%{ref: ref}) -> ref end)
+  end
+
+  def untar_release(%Sendfile{name: filename, dest: dest}, name) do
+    case SSH.execute("cd #{dest} && tar -xzf #{filename} && rm #{filename}", name) do
+      {0, _} -> :ok
+      {code, any} -> {:error, :remote_posix, code, any}
+    end 
   end
 end
