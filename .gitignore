@@ -23,3 +23,5 @@ erl_crash.dump
 deployer-*.tar
 
 .tool-versions
+
+/priv/known_hosts
