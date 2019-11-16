@@ -4,7 +4,7 @@ defmodule Deployer.Configuration.Context do
   alias Deployer.Configuration
   alias Configuration.{Target, Builder, Group, MF}
 
-  def create_configuration(config) do
+  def create_config(config) do
     %Configuration{}
     |> configuration_changeset(config)
     |> apply_action(:insert)
@@ -38,18 +38,6 @@ defmodule Deployer.Configuration.Context do
     |> cast(params, Group.__schema__(:fields))
   end
 
-  def create_builder(builder) do
-    %Builder{}
-    |> builder_changeset(builder)
-    |> apply_action(:insert)
-  end
-  
-  def builder_changeset(struct, params) do
-    struct
-    |> cast(params, Builder.__schema__(:fields) -- [:after_mf])
-    |> cast_embed(:after_mf, with: &mf_changeset/2)
-  end
-
   def mf_changeset(struct, params) do
     struct
     |> cast(params, MF.__schema__(:fields))
@@ -77,7 +65,7 @@ defmodule Deployer.Configuration.Context do
     ) do
       {true, %MF{}} -> {:ok, target}
       {true, nil} -> {:ok, target}
-      _ -> {:error, :invalid_configuration, target}
+      _ -> {:error, {:invalid_configuration, target}}
     end
   end
 end
