@@ -10,7 +10,7 @@ defmodule Deployer.SSH do
   @enforce_keys [:key_path, :host, :user, :ssh]
   defstruct [:key_path, :host, :user, :ssh, :id, pid_mappings: %{}, responses: %{}]
 
-  @default_timeout 60_000 * 5
+  @default_timeout 60_000 * 25
 
   defmodule Sendfile do
     @enforce_keys [:size, :file, :dest_folder, :dest_full, :dest, :touch_file, :reply_to, :state, :name]
@@ -296,7 +296,7 @@ defmodule Deployer.SSH do
   end
 
   def handle_continue({:create_dir, %{channel: cpid, dest_folder: dest_folder, dest: dest} = info}, state) do
-    case :ssh_sftp.make_dir(cpid, dest_folder, 1_000) do
+    case :ssh_sftp.make_dir(cpid, dest_folder, 50_000) do
       :ok ->
         AH.success("Created folder for upload at #{dest}")
         {:noreply, state, {:continue, {:upload, %{info | state: :uploading}}}}
@@ -314,7 +314,7 @@ defmodule Deployer.SSH do
     printer_pid = spawn(__MODULE__, :printer, [size, chunks])
     stream = File.stream!(file, [], chunks)
 
-    case :ssh_sftp.open(cpid, dest_full, [:creat, :write], 5_000) do
+    case :ssh_sftp.open(cpid, dest_full, [:creat, :write], 100_000) do
       {:ok, handle} ->
         start_time = :erlang.monotonic_time()
         stream
@@ -348,7 +348,7 @@ defmodule Deployer.SSH do
                    GenServer.reply(info.reply_to, {:error, :streaming_file, error})
                    {:noreply, state, {:continue, {:clean_up_dest, info}}}
                after
-                 2_000 ->
+                 60_000 ->
                    Process.exit(printer_pid, :kill)
                    GenServer.reply(info.reply_to, {:error, :streaming_file})
                    {:noreply, state, {:continue, {:clean_up_dest, info}}}
@@ -394,11 +394,11 @@ defmodule Deployer.SSH do
         receive do
           {:error?, pid} -> send(pid, {:printer, error})
         after
-          20_000 -> :ok
+          240_000 -> :ok
         end
       {:error?, pid} -> send(pid, {:printer, :noop})
     after
-      20_000 -> :ok
+      240_000 -> :ok
     end
   end
 end

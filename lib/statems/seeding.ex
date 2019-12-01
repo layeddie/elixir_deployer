@@ -52,7 +52,7 @@ defmodule Seeding do
         with(
           {_, :ok} <- {:make_priv_dir, File.mkdir_p(priv_path)},
           {_, priv_key_path} <- {:path_priv_key, Path.join(priv_path, "id_rsa")},
-          {_, :ok} <- {:copy_ssh_key_to_priv, File.cp(keyp_path, priv_key_path)}
+          {_, :ok} <- {:copy_ssh_key_to_priv, File.cp(key_path, priv_key_path)}
         ) do
 
           cl_host = String.to_charlist(host)
@@ -62,7 +62,7 @@ defmodule Seeding do
           options = [user: cl_user, silently_accept_hosts: true, user_dir: cl_priv_key_dir]
 
           try do
-            case :ssh.connect(cl_host, post, options) do
+            case :ssh.connect(cl_host, host, options) do
               {:ok, ref} ->
                 {:next_state, :waiting, %{data | key_path: cl_priv_key_dir, host: cl_host, user: cl_user, ssh: ref}, []}
               {:error, _reason} = error->
