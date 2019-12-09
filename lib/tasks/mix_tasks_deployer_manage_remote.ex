@@ -317,6 +317,28 @@ defmodule Mix.Tasks.Deployer.Manage.Remote do
     end
   end
 
+  def delete(ctx, conf, %{current_symlink: cs, releases: rels} = rinfo, name, t_ref) do
+    cs_ref = if(cs, do: cs.ref)
+
+    to_rem =
+      Enum.reduce(rels, [], fn(%{ref: ref} = rel, acc) ->
+        case t_ref == ref and ref != cs_ref do
+          true -> [rel | acc]
+          false ->
+            case ref == cs_ref do
+              true -> AH.warn("\n>>>>>> You're trying to remove the currently symlinked release!!! <<<<<<\n")
+              _ -> :ok
+            end
+            acc
+        end
+      end)
+
+    case remove_invalid_releases(false, to_rem, ctx, conf, rinfo, name) do
+      {:ok, n_rinfo} -> {:loop, {ctx, conf, n_rinfo, name}}
+      error -> error
+    end
+  end
+
   def prune(ctx, conf, %{current_symlink: cs, releases: rels} = rinfo, name, t_name) do
     cs_ref = if(cs, do: cs.ref)
 
