@@ -135,6 +135,26 @@ defmodule Mix.Tasks.Deployer.Manage do
 
   def help(ctx, releases, _), do: enter_loop(ctx, releases)
 
+
+  def delete(ctx, releases, t_ref) do
+    n_releases =
+      Enum.reduce(releases, [], fn(%{ref: ref} = rel, acc) ->
+        case ref == t_ref do
+          true ->
+            case remove_release(rel) do
+              :ok -> acc
+              {:error, error, _} -> [rel | acc]
+            end
+          false -> [rel | acc]
+        end
+      end)
+
+    case DH.DETS.write_releases(n_releases, ctx) do
+      {:ok, _} -> {:loop, {ctx, n_releases}}
+      error -> error
+    end
+  end
+
   def remove_release(%{ref: ref, name: rel_name, path: path}) do
     case File.rm_rf(path) do
       {:ok, _} ->
