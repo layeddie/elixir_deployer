@@ -1,0 +1,22 @@
+FROM base_ubuntu_elixir:latest
+
+ARG deployer_name=your_app_name
+ARG deployer_ts=latest
+
+RUN mkdir /app
+WORKDIR /app
+
+COPY apps ./apps
+COPY config ./config
+COPY mix.exs .
+COPY mix.lock .
+COPY rel ./rel
+
+RUN /bin/bash -c "PATH=${HOME}/.asdf/bin:/${HOME}/.asdf/shims:${PATH} && mix deps.get --only prod"
+
+LABEL com.homelytics.name=${deployer_name} \
+      com.homelytics.ts=${deployer_ts} \
+      ${deployer_name}-${deployer_ts}=${deployer_ts}
+
+
+RUN /bin/bash -c "PATH=${HOME}/.asdf/bin:/${HOME}/.asdf/shims:${PATH} && MIX_ENV=prod mix release ${deployer_name}"
