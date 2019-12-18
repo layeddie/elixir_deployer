@@ -31,8 +31,9 @@ defmodule Deployer.Builder.Docker do
       
       with(
         {_, :ok} <- {:create_temp, File.mkdir_p(temp_release_folder)},
-        {_, hooks} <- {:extract_pre_hooks, extract_hooks(:pre_hooks, docker_map)},
-        {_, {:ok, n_ctx, n_target}} <- {:pre_build_hooks, run_pre_build_hooks(hooks, ctx, target)},
+        {_, pre_hooks} <- {:extract_pre_hooks, extract_hooks(:pre_build_hooks, docker_map)},
+        {_, post_hooks} <- {:extract_pre_hooks, extract_hooks(:post_build_hooks, docker_map)},
+        {_, {:ok, n_ctx, n_target}} <- {:pre_build_hooks, run_hooks(pre_hooks, ctx, target)},
         {_, dockerfile} <- {:dockerfile, docker_env(docker_map, :dockerfile, "Dockerfile")},
         {_, docker_args} <- {:docker_args, docker_args(docker_map)},
         {_, :ok} <- {:docker_build, docker_build(name, timestamp, dockerfile, docker_args)},
@@ -48,7 +49,8 @@ defmodule Deployer.Builder.Docker do
         {_, :ok} <- {:cd_to_root, File.cd(root_path)},
         {_, {:ok, _}} <- {:copy_release_tar, File.cp_r(gziped_temp_path, gziped_final_path)},
         {_, {:ok, data}} <- {:read_file, File.read(gziped_final_path)},
-        {_, <<md5::binary>>} <- {:file_md5, :erlang.md5(data)}
+        {_, <<md5::binary>>} <- {:file_md5, :erlang.md5(data)},
+        {_, {:ok, n_ctx, n_target}} <- {:post_build_hooks, run_hooks(post_hooks, ctx, target)}
       )  do
         
         AH.success("Successfully built and tar'ed #{name}.")
@@ -139,16 +141,16 @@ defmodule Deployer.Builder.Docker do
 
   defp extract_hooks(_, _), do: []
 
-  defp run_pre_build_hooks([], ctx, target), do: {:ok, ctx, target}
+  defp run_hooks([], ctx, target), do: {:ok, ctx, target}
 
-  defp run_pre_build_hooks([{m, f, a} | t], ctx, target) do
+  defp run_hooks([{m, f, a} | t], ctx, target) do
     case apply(m, f, [ctx, target, [a]]) do
-      :ok -> run_pre_build_hooks(t, ctx, target)
-      {:ok, n_ctx, n_target} -> run_pre_build_hooks(t, n_ctx, n_target)
+      :ok -> run_hooks(t, ctx, target)
+      {:ok, n_ctx, n_target} -> run_hooks(t, n_ctx, n_target)
       error -> error
     end
   end
 
-  defp run_pre_build_hooks([_ | t], ctx, target), do: run_pre_build_hooks(t, ctx, target)
+  defp run_hooks([_ | t], ctx, target), do: run_hooks(t, ctx, target)
   
 end
